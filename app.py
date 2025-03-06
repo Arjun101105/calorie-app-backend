@@ -3,11 +3,16 @@ import joblib
 import pandas as pd
 from flask_cors import CORS
 
+
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+CORS(app)  # Enable CORS for all 
 
 # Load the trained model
 model = joblib.load('calorie_model.pkl')
+
+@app.route("/")
+def home():
+    return "API is running!", 200
 
 @app.route('/calculate-calories', methods=['POST'])
 def calculate_calories():
@@ -42,7 +47,7 @@ def calculate_calories():
         result = {
             "calories_burned": float(prediction[0]),
             "average_heart_rate": heart_rate
-            }
+        }
 
         return jsonify(result), 200
 
@@ -69,5 +74,4 @@ def estimate_body_temp(duration_min, intensity):
     }
     return base_temp + (temp_increase[intensity] * (duration_min / 60))
 
-if __name__ == '__main__':
-    app.run(debug=True)
+# Remove app.run() as Render uses Gunicorn
