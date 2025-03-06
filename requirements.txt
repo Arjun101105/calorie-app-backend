@@ -3,3 +3,4 @@ flask-cors
 joblib
 pandas
 gunicorn
+xgboost
