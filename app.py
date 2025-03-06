@@ -75,3 +75,8 @@ def estimate_body_temp(duration_min, intensity):
     return base_temp + (temp_increase[intensity] * (duration_min / 60))
 
 # Remove app.run() as Render uses Gunicorn
+if __name__ == '__main__':
+    import os
+    port = int(os.environ.get("PORT", 5000))  # Use PORT from Render, default to 5000
+    app.run(host="0.0.0.0", port=port, debug=False)
+
