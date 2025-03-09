@@ -1,97 +1,113 @@
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify
 import joblib
 import pandas as pd
 from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS
 
-# Allow both localhost (for development) and deployed frontend (for production)
-allowed_origins = ["http://localhost:3000", "https://your-frontend-domain.com"]
+# Load model and feature names
+model, FEATURE_COLUMNS = joblib.load("calorie_model.pkl")
 
-CORS(app, resources={r"/*": {"origins": allowed_origins}}, supports_credentials=True)
+def estimate_heart_rate(age, workout_type, duration):
+    """Estimate Heart Rate using Karvonen formula approximation with duration impact."""
+    max_hr = 220 - age  # Max Heart Rate
+    resting_hr = 70  # Approximate Resting HR
 
-# Load the trained model
-model = joblib.load('calorie_model.pkl')
+    intensity_factors = {
+        "Cardio": 0.85,
+        "Endurance": 0.7,
+        "Strength": 0.5,
+        "No Workout": 0.3
+    }
+    intensity = intensity_factors.get(workout_type, 0.3)  # Default: No Workout
 
-@app.route("/")
-def home():
-    return "API is running!", 200
+    # Adjust HR based on duration (longer workouts lower HR efficiency)
+    duration_factor = max(0.5, 1 - (duration / 180))  # HR decreases over long sessions
 
-@app.route('/calculate-calories', methods=['POST', 'OPTIONS'])
+    estimated_hr = resting_hr + (max_hr - resting_hr) * intensity * duration_factor
+    return max(60, min(estimated_hr, 200))  # Keep HR in realistic range
+
+def estimate_body_temp(duration, workout_type):
+    """Estimate Body Temperature based on duration and intensity."""
+    base_temp = 37.0  # Normal body temp in °C
+    temp_increase_rate = {
+        "Cardio": 1.5,
+        "Endurance": 1.0,
+        "Strength": 0.6,
+        "No Workout": 0.2
+    }
+    temp_increase = temp_increase_rate.get(workout_type, 0.2) * (duration / 60)  # Per hour scaling
+
+    return round(base_temp + temp_increase, 2)  # Round temp for readability
+
+@app.route("/calculate-calories", methods=["POST"])
 def calculate_calories():
-    if request.method == "OPTIONS":  # Handle CORS preflight request
-        response = make_response()
-        response.headers.add("Access-Control-Allow-Origin", request.headers.get("Origin"))
-        response.headers.add("Access-Control-Allow-Credentials", "true")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
-        response.headers.add("Access-Control-Allow-Methods", "POST,OPTIONS")
-        return response, 200
-
     try:
-        # Get data from the frontend
+        # Validate incoming request
         data = request.json
-        gender = 0 if data['gender'] == "Male" else 1
-        age = float(data['age'])
-        height = float(data['height'])
-        weight = float(data['weight'])
-        duration = float(data['duration'])
-        intensity = data['intensity']
+        required_fields = ["gender", "age", "height", "weight", "duration", "workout_type"]
+        
+        if not all(field in data for field in required_fields):
+            return jsonify({"error": "Missing required fields"}), 400
 
-        # Estimate heart rate and body temperature
-        heart_rate = estimate_heart_rate(age, intensity)
-        body_temp = estimate_body_temp(duration, intensity)
+        # Convert input values
+        gender = 0 if data["gender"].lower() == "male" else 1
+        age = float(data["age"])
+        height = float(data["height"])
+        weight = float(data["weight"])
+        duration = float(data["duration"])
+        workout_type = data.get("workout_type", "No Workout")  # Default if missing
 
-        # Create DataFrame for prediction
+        # **Estimate Heart Rate & Body Temp**
+        heart_rate = estimate_heart_rate(age, workout_type, duration)
+        body_temp = estimate_body_temp(duration, workout_type)
+
+        # One-hot encode workout type
+        valid_workout_types = ["Cardio", "Endurance", "Strength", "No Workout"]
+        workout_encoded = {f"workout_type_{wt}": (1 if workout_type == wt else 0) for wt in valid_workout_types}
+
+        # **Normalize Duration (Optional: If needed in training)**
+        normalized_duration = duration / 180  # Normalized between 0 and 1
+
+        # Create DataFrame with correct feature order
         features = {
-            'Gender': gender,
-            'Age': age,
-            'Height': height,
-            'Weight': weight,
-            'Duration': duration,
-            'Heart_Rate': heart_rate,
-            'Body_Temp': body_temp
+            "Age": age,
+            "Gender": gender,
+            "Height": height,
+            "Weight": weight,
+            "Duration": normalized_duration,  # Use normalized duration
+            "Heart_Rate": heart_rate,
+            "Body_Temp": body_temp,
+            **workout_encoded,  # Unpack one-hot encoded workout types
         }
+
+        # Convert to DataFrame & Ensure Correct Column Order
         input_df = pd.DataFrame([features])
 
-        # Predict calories
+        # Add missing columns if necessary
+        for col in FEATURE_COLUMNS:
+            if col not in input_df.columns:
+                input_df[col] = 0  # Fill missing features with 0
+
+        input_df = input_df[FEATURE_COLUMNS]  # Ensure correct column order
+
+        # Predict calories burnt
         prediction = model.predict(input_df)
-        result = {
-            "calories_burned": float(prediction[0]),
-            "average_heart_rate": heart_rate
-        }
 
-        response = make_response(jsonify(result))
-        response.headers.add("Access-Control-Allow-Origin", request.headers.get("Origin"))
-        response.headers.add("Access-Control-Allow-Credentials", "true")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
-        response.headers.add("Access-Control-Allow-Methods", "POST,OPTIONS")
-        return response, 200
+        return jsonify({
+            "calories_burned": round(float(prediction[0]), 2),
+            "estimated_heart_rate": round(heart_rate, 2),
+            "estimated_body_temp": round(body_temp, 2)
+        }), 200
 
+    except ValueError:
+        return jsonify({"error": "Invalid input type. Ensure numerical values for age, height, weight, and duration."}), 400
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
 
-def estimate_heart_rate(age, intensity):
-    """Estimate heart rate based on age and intensity"""
-    max_hr = 220 - age
-    intensity_factors = {
-        "Light": 0.50,
-        "Moderate": 0.70,
-        "Vigorous": 0.85
-    }
-    return (max_hr - 70) * intensity_factors[intensity] + 70
-
-def estimate_body_temp(duration_min, intensity):
-    """Estimate body temperature based on duration and intensity"""
-    base_temp = 37.0  # Normal body temp in °C
-    temp_increase = {
-        "Light": 0.3,
-        "Moderate": 0.6,
-        "Vigorous": 1.2
-    }
-    return base_temp + (temp_increase[intensity] * (duration_min / 60))
-
-# Start the Flask server
-if __name__ == '__main__':
+# Remove app.run() since Render uses Gunicorn
+if __name__ == "__main__":
     import os
-    port = int(os.environ.get("PORT", 5000))  # Use PORT from Render, default to 5000
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
