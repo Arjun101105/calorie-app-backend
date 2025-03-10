@@ -4,7 +4,9 @@ import pandas as pd
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS
+
+# ✅ Fix CORS: Explicitly allow credentials & frontend domain
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
 # Load model and feature names
 model, FEATURE_COLUMNS = joblib.load("calorie_model.pkl")
@@ -59,12 +61,26 @@ def calculate_calories():
         duration = float(data["duration"])
         workout_type = data.get("workout_type", "No Workout")  # Default if missing
 
+        # ✅ **Additional Validations**
+        if not (10 <= age <= 100):
+            return jsonify({"error": "Age must be between 10 and 100"}), 400
+        if not (50 <= height <= 250):
+            return jsonify({"error": "Height must be between 50 cm and 250 cm"}), 400
+        if not (20 <= weight <= 300):
+            return jsonify({"error": "Weight must be between 20 kg and 300 kg"}), 400
+        if not (1 <= duration <= 300):
+            return jsonify({"error": "Duration must be between 1 and 300 minutes"}), 400
+
         # **Estimate Heart Rate & Body Temp**
         heart_rate = estimate_heart_rate(age, workout_type, duration)
         body_temp = estimate_body_temp(duration, workout_type)
 
-        # One-hot encode workout type
+        # ✅ Ensure workout type is valid
         valid_workout_types = ["Cardio", "Endurance", "Strength", "No Workout"]
+        if workout_type not in valid_workout_types:
+            workout_type = "No Workout"  # Default to No Workout if invalid type is sent
+
+        # One-hot encode workout type
         workout_encoded = {f"workout_type_{wt}": (1 if workout_type == wt else 0) for wt in valid_workout_types}
 
         # **Normalize Duration (Optional: If needed in training)**
@@ -85,7 +101,7 @@ def calculate_calories():
         # Convert to DataFrame & Ensure Correct Column Order
         input_df = pd.DataFrame([features])
 
-        # Add missing columns if necessary
+        # ✅ Add missing columns if necessary
         for col in FEATURE_COLUMNS:
             if col not in input_df.columns:
                 input_df[col] = 0  # Fill missing features with 0
@@ -106,7 +122,7 @@ def calculate_calories():
     except Exception as e:
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
-# Remove app.run() since Render uses Gunicorn
+# ✅ Remove app.run() since Render uses Gunicorn
 if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 5000))
