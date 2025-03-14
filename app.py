@@ -8,8 +8,8 @@ app = Flask(__name__)
 # ✅ Fix CORS: Explicitly allow credentials & frontend domain
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
-# Load model and feature names
-model, FEATURE_COLUMNS = joblib.load("calorie_model.pkl")
+# ✅ Load model, feature names, and MAX_DURATION from file
+model, FEATURE_COLUMNS, MAX_DURATION = joblib.load("calorie_model.pkl")
 
 def estimate_heart_rate(age, workout_type, duration):
     """Estimate Heart Rate using Karvonen formula approximation with duration impact."""
@@ -25,7 +25,7 @@ def estimate_heart_rate(age, workout_type, duration):
     intensity = intensity_factors.get(workout_type, 0.3)  # Default: No Workout
 
     # Adjust HR based on duration (longer workouts lower HR efficiency)
-    duration_factor = max(0.5, 1 - (duration / 180))  # HR decreases over long sessions
+    duration_factor = max(0.5, 1 - (duration / MAX_DURATION))  # Match MAX_DURATION
 
     estimated_hr = resting_hr + (max_hr - resting_hr) * intensity * duration_factor
     return max(60, min(estimated_hr, 200))  # Keep HR in realistic range
@@ -72,8 +72,8 @@ def calculate_calories():
             return jsonify({"error": "Height must be between 50 cm and 250 cm"}), 400
         if not (20 <= weight <= 300):
             return jsonify({"error": "Weight must be between 20 kg and 300 kg"}), 400
-        if not (1 <= duration <= 300):
-            return jsonify({"error": "Duration must be between 1 and 300 minutes"}), 400
+        if not (1 <= duration <= MAX_DURATION):
+            return jsonify({"error": f"Duration must be between 1 and {MAX_DURATION} minutes"}), 400
 
         # **Estimate Heart Rate & Body Temp**
         heart_rate = estimate_heart_rate(age, workout_type, duration)
@@ -87,8 +87,8 @@ def calculate_calories():
         # One-hot encode workout type
         workout_encoded = {f"workout_type_{wt}": (1 if workout_type == wt else 0) for wt in valid_workout_types}
 
-        # **Normalize Duration (Optional: If needed in training)**
-        normalized_duration = duration / 180  # Normalized between 0 and 1
+        # ✅ **Normalize Duration with MAX_DURATION from Training**
+        normalized_duration = duration / MAX_DURATION  
 
         # Create DataFrame with correct feature order
         features = {
@@ -96,7 +96,7 @@ def calculate_calories():
             "Gender": gender,
             "Height": height,
             "Weight": weight,
-            "Duration": normalized_duration,  # Use normalized duration
+            "Duration": normalized_duration,  # Use consistent duration normalization
             "Heart_Rate": heart_rate,
             "Body_Temp": body_temp,
             **workout_encoded,  # Unpack one-hot encoded workout types
