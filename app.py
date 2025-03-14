@@ -43,6 +43,10 @@ def estimate_body_temp(duration, workout_type):
 
     return round(base_temp + temp_increase, 2)  # Round temp for readability
 
+@app.route('/')
+def home():
+    return "Hello, Flask is running!"
+
 @app.route("/calculate-calories", methods=["POST"])
 def calculate_calories():
     try:
